@@ -43,6 +43,8 @@ type exitIdle struct{}
 
 // ccBalancerWrapper is a wrapper on top of cc for balancers.
 // It implements balancer.ClientConn interface.
+
+// ccBalancerWrapper 是 cc 进行封装的 Balancer, 他实现了 balancer.ClientConn 接口
 type ccBalancerWrapper struct {
 	cc          *ClientConn
 	balancerMu  sync.Mutex // synchronizes calls to the balancer
@@ -53,6 +55,7 @@ type ccBalancerWrapper struct {
 	done        *grpcsync.Event
 
 	mu       sync.Mutex
+	// 一个 ccBalancerWrapper 包含多个 acBalancerWrapper
 	subConns map[*acBalancerWrapper]struct{}
 }
 
@@ -64,6 +67,7 @@ func newCCBalancerWrapper(cc *ClientConn, b balancer.Builder, bopts balancer.Bui
 		done:     grpcsync.NewEvent(),
 		subConns: make(map[*acBalancerWrapper]struct{}),
 	}
+	// 开始
 	go ccb.watcher()
 	ccb.balancer = b.Build(ccb, bopts)
 	_, ccb.hasExitIdle = ccb.balancer.(balancer.ExitIdler)
@@ -173,6 +177,7 @@ func (ccb *ccBalancerWrapper) resolverError(err error) {
 	ccb.balancer.ResolverError(err)
 }
 
+// NewSubConn 创建一个 SubConn
 func (ccb *ccBalancerWrapper) NewSubConn(addrs []resolver.Address, opts balancer.NewSubConnOptions) (balancer.SubConn, error) {
 	if len(addrs) <= 0 {
 		return nil, fmt.Errorf("grpc: cannot create SubConn with empty address list")
@@ -182,10 +187,12 @@ func (ccb *ccBalancerWrapper) NewSubConn(addrs []resolver.Address, opts balancer
 	if ccb.subConns == nil {
 		return nil, fmt.Errorf("grpc: ClientConn balancer wrapper was closed")
 	}
+	// 创建 AddrConn
 	ac, err := ccb.cc.newAddrConn(addrs, opts)
 	if err != nil {
 		return nil, err
 	}
+	// addrConn balancer wrapper. acBalancerWrapper 实现了  balancer.SubConn
 	acbw := &acBalancerWrapper{ac: ac}
 	acbw.ac.mu.Lock()
 	ac.acbw = acbw
@@ -234,6 +241,7 @@ func (ccb *ccBalancerWrapper) Target() string {
 
 // acBalancerWrapper is a wrapper on top of ac for balancers.
 // It implements balancer.SubConn interface.
+// 对一个 ac 进行封装的 Balancer, 他实现了 balancer.SubConn 接口
 type acBalancerWrapper struct {
 	mu sync.Mutex
 	ac *addrConn

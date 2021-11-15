@@ -29,6 +29,7 @@ import (
 )
 
 // ConfigSelector controls what configuration to use for every RPC.
+// 控制每一个RPC使用的配置
 type ConfigSelector interface {
 	// Selects the configuration for the RPC, or terminates it using the error.
 	// This error will be converted by the gRPC library to a status error with
@@ -147,7 +148,7 @@ func GetConfigSelector(state resolver.State) ConfigSelector {
 // implementations such that previous values are guaranteed to not be in use
 // when UpdateConfigSelector returns.
 type SafeConfigSelector struct {
-	mu sync.RWMutex
+	mu sync.RWMutex  // 用来保证 UpdateConfigSelector 和 SelectConfig 不会并发执行
 	cs ConfigSelector
 }
 

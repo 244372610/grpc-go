@@ -45,6 +45,7 @@ import (
 	"google.golang.org/grpc/serviceconfig"
 	"google.golang.org/grpc/status"
 
+	// 默认注册了以下 balancer 和 resolver
 	_ "google.golang.org/grpc/balancer/roundrobin"           // To register roundrobin.
 	_ "google.golang.org/grpc/internal/resolver/dns"         // To register dns resolver.
 	_ "google.golang.org/grpc/internal/resolver/passthrough" // To register passthrough resolver.
@@ -229,7 +230,7 @@ func DialContext(ctx context.Context, target string, opts ...DialOption) (conn *
 		default:
 		}
 	}()
-
+	// 是否设置 service config
 	scSet := false
 	if cc.dopts.scChan != nil {
 		// Try to get an initial service config.
@@ -259,7 +260,7 @@ func DialContext(ctx context.Context, target string, opts ...DialOption) (conn *
 	channelz.Infof(logger, cc.channelzID, "Channel authority set to %q", cc.authority)
 
 	if cc.dopts.scChan != nil && !scSet {
-		// Blocking wait for the initial service config.
+		// Blocking wait for the initial service config. 上面的一次是非阻塞
 		select {
 		case sc, ok := <-cc.dopts.scChan:
 			if ok {
@@ -271,6 +272,7 @@ func DialContext(ctx context.Context, target string, opts ...DialOption) (conn *
 		}
 	}
 	if cc.dopts.scChan != nil {
+		// 监听 sc 的变化
 		go cc.scWatcher()
 	}
 
@@ -287,7 +289,7 @@ func DialContext(ctx context.Context, target string, opts ...DialOption) (conn *
 		Target:           cc.parsedTarget,
 	}
 
-	// Build the resolver.
+	// Build the resolver. 创建 resolverWrapper
 	rWrapper, err := newCCResolverWrapper(cc, resolverBuilder)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build resolver: %v", err)
@@ -331,6 +333,8 @@ func chainUnaryClientInterceptors(cc *ClientConn) {
 	interceptors := cc.dopts.chainUnaryInts
 	// Prepend dopts.unaryInt to the chaining interceptors if it exists, since unaryInt will
 	// be executed before any other chained interceptors.
+
+	// dopts.unaryInt 会在 dopts.chainUnaryInts 先被执行
 	if cc.dopts.unaryInt != nil {
 		interceptors = append([]UnaryClientInterceptor{cc.dopts.unaryInt}, interceptors...)
 	}
@@ -362,6 +366,8 @@ func chainStreamClientInterceptors(cc *ClientConn) {
 	interceptors := cc.dopts.chainStreamInts
 	// Prepend dopts.streamInt to the chaining interceptors if it exists, since streamInt will
 	// be executed before any other chained interceptors.
+
+	// dopts.streamInt 会在 dopts.chainStreamInts 先被执行
 	if cc.dopts.streamInt != nil {
 		interceptors = append([]StreamClientInterceptor{cc.dopts.streamInt}, interceptors...)
 	}
@@ -390,6 +396,8 @@ func getChainStreamer(interceptors []StreamClientInterceptor, curr int, finalStr
 
 // connectivityStateManager keeps the connectivity.State of ClientConn.
 // This struct will eventually be exported so the balancers can access it.
+
+// 保存 ClientConn 的 connectivity.State
 type connectivityStateManager struct {
 	mu         sync.Mutex
 	state      connectivity.State
@@ -475,12 +483,14 @@ type ClientConn struct {
 	safeConfigSelector iresolver.SafeConfigSelector
 
 	mu              sync.RWMutex
+	// 解析器
 	resolverWrapper *ccResolverWrapper
 	sc              *ServiceConfig
 	conns           map[*addrConn]struct{}
 	// Keepalive parameter can be updated if a GoAway is received.
 	mkp             keepalive.ClientParameters
 	curBalancerName string
+	// 负载均衡器, 对应的 ccBalancerWrapper 实现了 balancer.ClientConn 接口
 	balancerWrapper *ccBalancerWrapper
 	retryThrottler  atomic.Value
 
@@ -729,6 +739,7 @@ func (cc *ClientConn) switchBalancer(name string) {
 	cc.balancerWrapper = newCCBalancerWrapper(cc, builder, cc.balancerBuildOpts)
 }
 
+// 处理 SubConn 的状态变化
 func (cc *ClientConn) handleSubConnStateChange(sc balancer.SubConn, s connectivity.State, err error) {
 	cc.mu.Lock()
 	if cc.conns == nil {
@@ -833,6 +844,14 @@ func (ac *addrConn) connect() error {
 		ac.mu.Unlock()
 		return errConnClosing
 	}
+	// 如果当前状态不是 Idle，则直接返回。
+	// 可能会是以下几种状态
+	//  // Connecting indicates the ClientConn is connecting.
+	//  Connecting
+	//	// Ready indicates the ClientConn is ready for work.
+	//	Ready
+	//	// TransientFailure indicates the ClientConn has seen a failure but expects to recover.
+	//	TransientFailure）
 	if ac.state != connectivity.Idle {
 		ac.mu.Unlock()
 		return nil
@@ -962,6 +981,7 @@ func (cc *ClientConn) getTransport(ctx context.Context, failfast bool, method st
 	return t, done, nil
 }
 
+// 应用 serviceConfig 和创建 balancerWrapper
 func (cc *ClientConn) applyServiceConfigAndBalancer(sc *ServiceConfig, configSelector iresolver.ConfigSelector, addrs []resolver.Address) {
 	if sc == nil {
 		// should never reach here.
@@ -985,14 +1005,17 @@ func (cc *ClientConn) applyServiceConfigAndBalancer(sc *ServiceConfig, configSel
 	}
 
 	if cc.dopts.balancerBuilder == nil {
+		// 如果没有设置 dial option
 		// Only look at balancer types and switch balancer if balancer dial
 		// option is not set.
 		var newBalancerName string
 		if cc.sc != nil && cc.sc.lbConfig != nil {
+			// lbConfig 的优先级高于 LB
 			newBalancerName = cc.sc.lbConfig.name
 		} else {
 			var isGRPCLB bool
 			for _, a := range addrs {
+				// 如果地址类型是 GRPCLB
 				if a.Type == resolver.GRPCLB {
 					isGRPCLB = true
 					break
@@ -1007,7 +1030,8 @@ func (cc *ClientConn) applyServiceConfigAndBalancer(sc *ServiceConfig, configSel
 			}
 		}
 		cc.switchBalancer(newBalancerName)
-	} else if cc.balancerWrapper == nil {
+	} else if cc.balancerWrapper == nil { // 表示是第一次处理地址解析
+		// 如果设置了 dial option， 并且是第一次解析地址。则创建对应的balancer
 		// Balancer dial option was set, and this is the first time handling
 		// resolved addresses. Build a balancer with dopts.balancerBuilder.
 		cc.curBalancerName = cc.dopts.balancerBuilder.Name()
@@ -1102,8 +1126,10 @@ type addrConn struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
+	// 客户真实使用的 conn
 	cc     *ClientConn
 	dopts  dialOptions
+	// 对应的 acBalancerWrapper
 	acbw   balancer.SubConn
 	scopts balancer.NewSubConnOptions
 
@@ -1616,6 +1642,7 @@ func (cc *ClientConn) parseTargetAndFindResolver() (resolver.Builder, error) {
 	channelz.Infof(logger, cc.channelzID, "original dial target is: %q", cc.target)
 
 	var rb resolver.Builder
+	// 根据 target 字符串解析
 	parsedTarget, err := parseTarget(cc.target)
 	if err != nil {
 		channelz.Infof(logger, cc.channelzID, "dial target %q parse failed: %v", cc.target, err)
@@ -1623,11 +1650,13 @@ func (cc *ClientConn) parseTargetAndFindResolver() (resolver.Builder, error) {
 		channelz.Infof(logger, cc.channelzID, "parsed dial target is: %+v", parsedTarget)
 		rb = cc.getResolver(parsedTarget.Scheme)
 		if rb != nil {
+			// 如果成功获取对应的 resolver， 则返回
 			cc.parsedTarget = parsedTarget
 			return rb, nil
 		}
 	}
 
+	// 如果解析 target 失败，获取没有获取到对应的 resolver，则使用默认 scheme。默认注册了 passthrough、 unix、 dns resolver
 	// We are here because the user's dial target did not contain a scheme or
 	// specified an unregistered scheme. We should fallback to the default
 	// scheme, except when a custom dialer is specified in which case, we should

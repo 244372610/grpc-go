@@ -194,6 +194,7 @@ type State struct {
 // brand new implementation of this interface. For the situations like
 // testing, the new implementation should embed this interface. This allows
 // gRPC to add new methods to this interface.
+// ccResolverWrapper 实现了这个接口
 type ClientConn interface {
 	// UpdateState updates the state of the ClientConn appropriately.
 	UpdateState(State) error

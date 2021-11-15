@@ -95,6 +95,7 @@ func Get(name string) Builder {
 // implementation of this interface. For situations like testing, any
 // implementations should embed this interface. This allows gRPC to add new
 // methods to this interface.
+// acBalancerWrapper 实现了这个接口
 type SubConn interface {
 	// UpdateAddresses updates the addresses used in this SubConn.
 	// gRPC checks if currently-connected address is still in the new list.
@@ -140,6 +141,7 @@ type State struct {
 // brand new implementation of this interface. For the situations like
 // testing, the new implementation should embed this interface. This allows
 // gRPC to add new methods to this interface.
+// ccBalancerWrapper 实现了这个接口
 type ClientConn interface {
 	// NewSubConn is called by balancer to create a new SubConn.
 	// It doesn't block and wait for the connections to be established.
@@ -278,7 +280,7 @@ func TransientFailureError(e error) error { return e }
 // Picker is used by gRPC to pick a SubConn to send an RPC.
 // Balancer is expected to generate a new picker from its snapshot every time its
 // internal state has changed.
-//
+// 每当 Balancer 的内部状态发生变化时，将从 Balancer 的快照生成一个新的选择器。
 // The pickers used by gRPC can be updated by ClientConn.UpdateState().
 type Picker interface {
 	// Pick returns the connection to use for this RPC and related information.

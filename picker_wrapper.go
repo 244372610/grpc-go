@@ -32,6 +32,7 @@ import (
 
 // pickerWrapper is a wrapper of balancer.Picker. It blocks on certain pick
 // actions and unblock when there's a picker update.
+// 对 balancer.Picker 进行封装
 type pickerWrapper struct {
 	mu         sync.Mutex
 	done       bool
