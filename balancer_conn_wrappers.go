@@ -43,7 +43,9 @@ type exitIdle struct{}
 
 // ccBalancerWrapper is a wrapper on top of cc for balancers.
 // It implements balancer.ClientConn interface.
+// ccBalancerWrapper 实现了 balancer.ClientConn 接口
 type ccBalancerWrapper struct {
+	// 这里是 grpc.Dial 生成的 ClientConn 和 balancer.ClientConn 不同
 	cc          *ClientConn
 	balancerMu  sync.Mutex // synchronizes calls to the balancer
 	balancer    balancer.Balancer
