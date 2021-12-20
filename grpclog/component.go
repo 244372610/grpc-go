@@ -107,6 +107,7 @@ func (c *componentData) V(l int) bool {
 // with the name already exists, nothing will be created and it will be
 // returned. SetLoggerV2 will panic if it is called with a logger created by
 // Component.
+// 如果 SetLoggerV2 方法传递的参数是 componentData 类型，则panic
 func Component(componentName string) DepthLoggerV2 {
 	if cData, ok := cache[componentName]; ok {
 		return cData

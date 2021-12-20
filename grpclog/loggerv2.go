@@ -129,7 +129,9 @@ func newLoggerV2WithConfig(infoW, warningW, errorW io.Writer, c loggerV2Config) 
 	if c.jsonFormat {
 		flag = 0
 	}
+	// info 输出
 	m = append(m, log.New(infoW, "", flag))
+	// warn 输出
 	m = append(m, log.New(io.MultiWriter(infoW, warningW), "", flag))
 	ew := io.MultiWriter(infoW, warningW, errorW) // ew will be used for error and fatal.
 	m = append(m, log.New(ew, "", flag))
@@ -157,9 +159,11 @@ func newLoggerV2() LoggerV2 {
 	var v int
 	vLevel := os.Getenv("GRPC_GO_LOG_VERBOSITY_LEVEL")
 	if vl, err := strconv.Atoi(vLevel); err == nil {
+		// good 注意这种写法，可以在 err 不为 nil 的时候才设置值
 		v = vl
 	}
 
+	// 是否以 json 格式输出
 	jsonFormat := strings.EqualFold(os.Getenv("GRPC_GO_LOG_FORMATTER"), "json")
 
 	return newLoggerV2WithConfig(infoW, warningW, errorW, loggerV2Config{
