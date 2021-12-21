@@ -142,6 +142,7 @@ func (s *Status) String() string {
 
 // Error wraps a pointer of a status proto. It implements error and Status,
 // and a nil *Error should never be returned by this package.
+// Error 实现了 error 和 Status
 type Error struct {
 	s *Status
 }

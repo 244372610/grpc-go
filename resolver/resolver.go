@@ -173,6 +173,7 @@ type BuildOptions struct {
 }
 
 // State contains the current Resolver state relevant to the ClientConn.
+// State 包含与 ClientConn 相关的当前 Resolver 状态。
 type State struct {
 	// Addresses is the latest set of resolved addresses for the target.
 	Addresses []Address
@@ -189,17 +190,19 @@ type State struct {
 
 // ClientConn contains the callbacks for resolver to notify any updates
 // to the gRPC ClientConn.
-//
+// ClientConn 包含了通知 grpc Client Conn 变化的回调方法
 // This interface is to be implemented by gRPC. Users should not need a
 // brand new implementation of this interface. For the situations like
 // testing, the new implementation should embed this interface. This allows
 // gRPC to add new methods to this interface.
+// 注意 balancer 中也有一个ClientConn
 type ClientConn interface {
 	// UpdateState updates the state of the ClientConn appropriately.
 	UpdateState(State) error
 	// ReportError notifies the ClientConn that the Resolver encountered an
 	// error.  The ClientConn will notify the load balancer and begin calling
 	// ResolveNow on the Resolver with exponential backoff.
+	// 会通知 load balancer 并且调用 Resolver 上的 ResolveNow
 	ReportError(error)
 	// NewAddress is called by resolver to notify ClientConn a new list
 	// of resolved addresses.
@@ -227,7 +230,7 @@ type ClientConn interface {
 // target does not contain a scheme or if the parsed scheme is not registered
 // (i.e. no corresponding resolver available to resolve the endpoint), we will
 // apply the default scheme, and will attempt to reparse it.
-//
+// 如果对应的target没有包含一个 scheme 或者解析得到的 scheme 没有注册，会使用默认的resolver来处理
 // Examples:
 //
 // - "dns://some_authority/foo.bar"
@@ -268,11 +271,13 @@ type ResolveNowOptions struct{}
 
 // Resolver watches for the updates on the specified target.
 // Updates include address updates and service config updates.
+// 监视特定 target 上的更新，包括地址的更新和 service 配置的更新
 type Resolver interface {
 	// ResolveNow will be called by gRPC to try to resolve the target name
 	// again. It's just a hint, resolver can ignore this if it's not necessary.
 	//
 	// It could be called multiple times concurrently.
+	// 解析 target name
 	ResolveNow(ResolveNowOptions)
 	// Close closes the resolver.
 	Close()
