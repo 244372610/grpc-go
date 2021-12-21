@@ -90,11 +90,13 @@ func Get(name string) Builder {
 //
 // Once established, if a connection is lost, the SubConn will transition
 // directly to IDLE.
-//
+// 一旦建立，如果连接丢失，SubConn 将直接转换为 IDLE 状态
 // This interface is to be implemented by gRPC. Users should not need their own
 // implementation of this interface. For situations like testing, any
 // implementations should embed this interface. This allows gRPC to add new
 // methods to this interface.
+// 每一个SubConn 包含一个地址列表， grpc在连接的时候会依次遍历连接对应的server，并且在其中一个连接成功后停止后面的尝试，
+// 如果所有的地址都连接失败， SubConn 将进入TRANSIENT_FAILURE一段回退时间， 稍后会变化到 IDLE 状态
 type SubConn interface {
 	// UpdateAddresses updates the addresses used in this SubConn.
 	// gRPC checks if currently-connected address is still in the new list.
@@ -106,6 +108,7 @@ type SubConn interface {
 	//
 	// Deprecated: This method is now part of the ClientConn interface and will
 	// eventually be removed from here.
+	// GRPC 会检查当前连接成功的地址是否还在新的地址列表中，如果在的话，链接继续保持, 如果不存在的话，则对应连接会被关掉并创建一个新的连接
 	UpdateAddresses([]resolver.Address)
 	// Connect starts the connecting for this SubConn.
 	Connect()
@@ -197,6 +200,7 @@ type BuildOptions struct {
 }
 
 // Builder creates a balancer.
+// 创建一个 balancer
 type Builder interface {
 	// Build creates a new balancer with the ClientConn.
 	Build(cc ClientConn, opts BuildOptions) Balancer
@@ -280,6 +284,7 @@ func TransientFailureError(e error) error { return e }
 // internal state has changed.
 //
 // The pickers used by gRPC can be updated by ClientConn.UpdateState().
+// 当 Balancer 内部状态发生变化的时候会生成一个新的 picker
 type Picker interface {
 	// Pick returns the connection to use for this RPC and related information.
 	//

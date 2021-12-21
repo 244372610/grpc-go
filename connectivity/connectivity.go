@@ -48,6 +48,7 @@ func (s State) String() string {
 	}
 }
 
+// conn 一共有 5 种状态
 const (
 	// Idle indicates the ClientConn is idle.
 	Idle State = iota
