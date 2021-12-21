@@ -33,6 +33,7 @@ import (
 
 // ccResolverWrapper is a wrapper on top of cc for resolvers.
 // It implements resolver.ClientConn interface.
+// ccResolverWrapper 是对 ClientConn 的封装
 type ccResolverWrapper struct {
 	cc         *ClientConn
 	resolverMu sync.Mutex
