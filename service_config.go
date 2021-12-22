@@ -61,6 +61,7 @@ type ServiceConfig struct {
 	// specified via grpc.WithBalancerName will override this.  This is deprecated;
 	// lbConfigs is preferred.  If lbConfig and LB are both present, lbConfig
 	// will be used.
+	// 优先使用 lbConfig
 	LB *string
 
 	// lbConfig is the service config's load balancing configuration.  If
@@ -96,6 +97,7 @@ type ServiceConfig struct {
 	healthCheckConfig *healthCheckConfig
 	// rawJSONString stores service config json string that get parsed into
 	// this service config struct.
+	// 原始的 json 配置
 	rawJSONString string
 }
 

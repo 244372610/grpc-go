@@ -608,6 +608,7 @@ func (cc *ClientConn) updateResolverState(s resolver.State, err error) error {
 	// Check if the ClientConn is already closed. Some fields (e.g.
 	// balancerWrapper) are set to nil when closing the ClientConn, and could
 	// cause nil pointer panic if we don't have this check.
+	// 检查 ClientConn 是否已经关闭，如果不做这个检查的话可能会操作空指针异常
 	if cc.conns == nil {
 		cc.mu.Unlock()
 		return nil
