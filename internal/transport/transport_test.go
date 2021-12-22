@@ -194,12 +194,12 @@ func (h *testStreamHandler) handleStreamMisbehave(t *testing.T, s *Stream) {
 	}
 }
 
-func (h *testStreamHandler) handleStreamEncodingRequiredStatus(t *testing.T, s *Stream) {
+func (h *testStreamHandler) handleStreamEncodingRequiredStatus(s *Stream) {
 	// raw newline is not accepted by http2 framer so it must be encoded.
 	h.t.WriteStatus(s, encodingTestStatus)
 }
 
-func (h *testStreamHandler) handleStreamInvalidHeaderField(t *testing.T, s *Stream) {
+func (h *testStreamHandler) handleStreamInvalidHeaderField(s *Stream) {
 	headerFields := []hpack.HeaderField{}
 	headerFields = append(headerFields, hpack.HeaderField{Name: "content-type", Value: expectedInvalidHeaderField})
 	h.t.controlBuf.put(&headerFrame{
@@ -356,13 +356,13 @@ func (s *server) start(t *testing.T, port int, serverConfig *ServerConfig, ht hT
 			})
 		case encodingRequiredStatus:
 			go transport.HandleStreams(func(s *Stream) {
-				go h.handleStreamEncodingRequiredStatus(t, s)
+				go h.handleStreamEncodingRequiredStatus(s)
 			}, func(ctx context.Context, method string) context.Context {
 				return ctx
 			})
 		case invalidHeaderField:
 			go transport.HandleStreams(func(s *Stream) {
-				go h.handleStreamInvalidHeaderField(t, s)
+				go h.handleStreamInvalidHeaderField(s)
 			}, func(ctx context.Context, method string) context.Context {
 				return ctx
 			})
@@ -2184,6 +2184,43 @@ func (s) TestClientHandshakeInfo(t *testing.T) {
 	wantAttr := attributes.New(testAttrKey, testAttrVal)
 	if gotAttr := creds.attr; !cmp.Equal(gotAttr, wantAttr, cmp.AllowUnexported(attributes.Attributes{})) {
 		t.Fatalf("received attributes %v in creds, want %v", gotAttr, wantAttr)
+	}
+}
+
+// TestClientHandshakeInfoDialer adds attributes to the resolver.Address passes to
+// NewClientTransport and verifies that these attributes are received by a custom
+// dialer.
+func (s) TestClientHandshakeInfoDialer(t *testing.T) {
+	server := setUpServerOnly(t, 0, &ServerConfig{}, pingpong)
+	defer server.stop()
+
+	const (
+		testAttrKey = "foo"
+		testAttrVal = "bar"
+	)
+	addr := resolver.Address{
+		Addr:       "localhost:" + server.port,
+		Attributes: attributes.New(testAttrKey, testAttrVal),
+	}
+	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(2*time.Second))
+	defer cancel()
+
+	var attr *attributes.Attributes
+	dialer := func(ctx context.Context, addr string) (net.Conn, error) {
+		ai := credentials.ClientHandshakeInfoFromContext(ctx)
+		attr = ai.Attributes
+		return (&net.Dialer{}).DialContext(ctx, "tcp", addr)
+	}
+
+	tr, err := NewClientTransport(ctx, context.Background(), addr, ConnectOptions{Dialer: dialer}, func() {}, func(GoAwayReason) {}, func() {})
+	if err != nil {
+		t.Fatalf("NewClientTransport(): %v", err)
+	}
+	defer tr.Close(fmt.Errorf("closed manually by test"))
+
+	wantAttr := attributes.New(testAttrKey, testAttrVal)
+	if gotAttr := attr; !cmp.Equal(gotAttr, wantAttr, cmp.AllowUnexported(attributes.Attributes{})) {
+		t.Errorf("Received attributes %v in custom dialer, want %v", gotAttr, wantAttr)
 	}
 }
 

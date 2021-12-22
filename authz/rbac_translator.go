@@ -94,7 +94,8 @@ func getStringMatcher(value string) *v3matcherpb.StringMatcher {
 	switch {
 	case value == "*":
 		return &v3matcherpb.StringMatcher{
-			MatchPattern: &v3matcherpb.StringMatcher_SafeRegex{},
+			MatchPattern: &v3matcherpb.StringMatcher_SafeRegex{
+				SafeRegex: &v3matcherpb.RegexMatcher{Regex: ".+"}},
 		}
 	case strings.HasSuffix(value, "*"):
 		prefix := strings.TrimSuffix(value, "*")
@@ -117,8 +118,9 @@ func getHeaderMatcher(key, value string) *v3routepb.HeaderMatcher {
 	switch {
 	case value == "*":
 		return &v3routepb.HeaderMatcher{
-			Name:                 key,
-			HeaderMatchSpecifier: &v3routepb.HeaderMatcher_SafeRegexMatch{},
+			Name: key,
+			HeaderMatchSpecifier: &v3routepb.HeaderMatcher_SafeRegexMatch{
+				SafeRegexMatch: &v3matcherpb.RegexMatcher{Regex: ".+"}},
 		}
 	case strings.HasSuffix(value, "*"):
 		prefix := strings.TrimSuffix(value, "*")
@@ -154,21 +156,21 @@ func parsePrincipalNames(principalNames []string) []*v3rbacpb.Principal {
 	return ps
 }
 
-func parsePeer(source peer) (*v3rbacpb.Principal, error) {
+func parsePeer(source peer) *v3rbacpb.Principal {
 	if source.Principals == nil {
 		return &v3rbacpb.Principal{
 			Identifier: &v3rbacpb.Principal_Any{
 				Any: true,
 			},
-		}, nil
+		}
 	}
 	if len(source.Principals) == 0 {
 		return &v3rbacpb.Principal{
 			Identifier: &v3rbacpb.Principal_Authenticated_{
 				Authenticated: &v3rbacpb.Principal_Authenticated{},
-			}}, nil
+			}}
 	}
-	return principalOr(parsePrincipalNames(source.Principals)), nil
+	return principalOr(parsePrincipalNames(source.Principals))
 }
 
 func parsePaths(paths []string) []*v3rbacpb.Permission {
@@ -257,17 +259,13 @@ func parseRules(rules []rule, prefixName string) (map[string]*v3rbacpb.Policy, e
 		if rule.Name == "" {
 			return policies, fmt.Errorf(`%d: "name" is not present`, i)
 		}
-		principal, err := parsePeer(rule.Source)
-		if err != nil {
-			return nil, fmt.Errorf("%d: %v", i, err)
-		}
 		permission, err := parseRequest(rule.Request)
 		if err != nil {
 			return nil, fmt.Errorf("%d: %v", i, err)
 		}
 		policyName := prefixName + "_" + rule.Name
 		policies[policyName] = &v3rbacpb.Policy{
-			Principals:  []*v3rbacpb.Principal{principal},
+			Principals:  []*v3rbacpb.Principal{parsePeer(rule.Source)},
 			Permissions: []*v3rbacpb.Permission{permission},
 		}
 	}

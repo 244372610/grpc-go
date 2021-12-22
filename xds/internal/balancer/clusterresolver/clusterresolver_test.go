@@ -33,8 +33,9 @@ import (
 	"google.golang.org/grpc/xds/internal"
 	"google.golang.org/grpc/xds/internal/testutils/fakeclient"
 	"google.golang.org/grpc/xds/internal/xdsclient"
+	"google.golang.org/grpc/xds/internal/xdsclient/xdsresource"
 
-	_ "google.golang.org/grpc/xds/internal/xdsclient/v2" // V2 client registration.
+	_ "google.golang.org/grpc/xds/internal/xdsclient/controller/version/v2" // V2 client registration.
 )
 
 const (
@@ -47,10 +48,10 @@ const (
 var (
 	// A non-empty endpoints update which is expected to be accepted by the EDS
 	// LB policy.
-	defaultEndpointsUpdate = xdsclient.EndpointsUpdate{
-		Localities: []xdsclient.Locality{
+	defaultEndpointsUpdate = xdsresource.EndpointsUpdate{
+		Localities: []xdsresource.Locality{
 			{
-				Endpoints: []xdsclient.Endpoint{{Address: "endpoint1"}},
+				Endpoints: []xdsresource.Endpoint{{Address: "endpoint1"}},
 				ID:        internal.LocalityID{Zone: "zone"},
 				Priority:  1,
 				Weight:    100,
@@ -270,7 +271,7 @@ func (s) TestErrorFromXDSClientUpdate(t *testing.T) {
 	if _, err := xdsC.WaitForWatchEDS(ctx); err != nil {
 		t.Fatalf("xdsClient.WatchEndpoints failed with error: %v", err)
 	}
-	xdsC.InvokeWatchEDSCallback("", xdsclient.EndpointsUpdate{}, nil)
+	xdsC.InvokeWatchEDSCallback("", xdsresource.EndpointsUpdate{}, nil)
 	edsLB, err := waitForNewChildLB(ctx, edsLBCh)
 	if err != nil {
 		t.Fatal(err)
@@ -279,8 +280,8 @@ func (s) TestErrorFromXDSClientUpdate(t *testing.T) {
 		t.Fatalf("EDS impl got unexpected update: %v", err)
 	}
 
-	connectionErr := xdsclient.NewErrorf(xdsclient.ErrorTypeConnection, "connection error")
-	xdsC.InvokeWatchEDSCallback("", xdsclient.EndpointsUpdate{}, connectionErr)
+	connectionErr := xdsresource.NewErrorf(xdsresource.ErrorTypeConnection, "connection error")
+	xdsC.InvokeWatchEDSCallback("", xdsresource.EndpointsUpdate{}, connectionErr)
 
 	sCtx, sCancel := context.WithTimeout(context.Background(), defaultTestShortTimeout)
 	defer sCancel()
@@ -297,8 +298,8 @@ func (s) TestErrorFromXDSClientUpdate(t *testing.T) {
 		t.Fatalf("want resolver error, got %v", err)
 	}
 
-	resourceErr := xdsclient.NewErrorf(xdsclient.ErrorTypeResourceNotFound, "clusterResolverBalancer resource not found error")
-	xdsC.InvokeWatchEDSCallback("", xdsclient.EndpointsUpdate{}, resourceErr)
+	resourceErr := xdsresource.NewErrorf(xdsresource.ErrorTypeResourceNotFound, "clusterResolverBalancer resource not found error")
+	xdsC.InvokeWatchEDSCallback("", xdsresource.EndpointsUpdate{}, resourceErr)
 	// Even if error is resource not found, watch shouldn't be canceled, because
 	// this is an EDS resource removed (and xds client actually never sends this
 	// error, but we still handles it).
@@ -359,7 +360,7 @@ func (s) TestErrorFromResolver(t *testing.T) {
 	if _, err := xdsC.WaitForWatchEDS(ctx); err != nil {
 		t.Fatalf("xdsClient.WatchEndpoints failed with error: %v", err)
 	}
-	xdsC.InvokeWatchEDSCallback("", xdsclient.EndpointsUpdate{}, nil)
+	xdsC.InvokeWatchEDSCallback("", xdsresource.EndpointsUpdate{}, nil)
 	edsLB, err := waitForNewChildLB(ctx, edsLBCh)
 	if err != nil {
 		t.Fatal(err)
@@ -368,7 +369,7 @@ func (s) TestErrorFromResolver(t *testing.T) {
 		t.Fatalf("EDS impl got unexpected update: %v", err)
 	}
 
-	connectionErr := xdsclient.NewErrorf(xdsclient.ErrorTypeConnection, "connection error")
+	connectionErr := xdsresource.NewErrorf(xdsresource.ErrorTypeConnection, "connection error")
 	edsB.ResolverError(connectionErr)
 
 	sCtx, sCancel := context.WithTimeout(context.Background(), defaultTestShortTimeout)
@@ -386,7 +387,7 @@ func (s) TestErrorFromResolver(t *testing.T) {
 		t.Fatalf("want resolver error, got %v", err)
 	}
 
-	resourceErr := xdsclient.NewErrorf(xdsclient.ErrorTypeResourceNotFound, "clusterResolverBalancer resource not found error")
+	resourceErr := xdsresource.NewErrorf(xdsresource.ErrorTypeResourceNotFound, "clusterResolverBalancer resource not found error")
 	edsB.ResolverError(resourceErr)
 	if _, err := xdsC.WaitForCancelEDSWatch(ctx); err != nil {
 		t.Fatalf("want watch to be canceled, waitForCancel failed: %v", err)

@@ -27,8 +27,6 @@ import (
 	"io/ioutil"
 	"strings"
 
-	v2corepb "github.com/envoyproxy/go-control-plane/envoy/api/v2/core"
-	v3corepb "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	"github.com/golang/protobuf/jsonpb"
 	"github.com/golang/protobuf/proto"
 	"google.golang.org/grpc"
@@ -36,9 +34,12 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/credentials/tls/certprovider"
 	"google.golang.org/grpc/internal"
+	"google.golang.org/grpc/internal/envconfig"
 	"google.golang.org/grpc/internal/pretty"
-	"google.golang.org/grpc/internal/xds/env"
-	"google.golang.org/grpc/xds/internal/version"
+	"google.golang.org/grpc/xds/internal/xdsclient/xdsresource/version"
+
+	v2corepb "github.com/envoyproxy/go-control-plane/envoy/api/v2/core"
+	v3corepb "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 )
 
 const (
@@ -70,8 +71,8 @@ type ServerConfig struct {
 	// Creds contains the credentials to be used while talking to the xDS
 	// server, as a grpc.DialOption.
 	Creds grpc.DialOption
-	// credsType is the type of the creds. It will be used to dedup servers.
-	credsType string
+	// CredsType is the type of the creds. It will be used to dedup servers.
+	CredsType string
 	// TransportAPI indicates the API version of xDS transport protocol to use.
 	// This describes the xDS gRPC endpoint and version of
 	// DiscoveryRequest/Response used on the wire.
@@ -83,6 +84,26 @@ type ServerConfig struct {
 	// but we keep it in each server config so that its type (e.g. *v2pb.Node or
 	// *v3pb.Node) is consistent with the transport API version.
 	NodeProto proto.Message
+}
+
+// String returns the string representation of the ServerConfig.
+//
+// This string representation will be used as map keys in federation
+// (`map[ServerConfig]authority`), so that the xDS ClientConn and stream will be
+// shared by authorities with different names but the same server config.
+//
+// It covers (almost) all the fields so the string can represent the config
+// content. It doesn't cover NodeProto because NodeProto isn't used by
+// federation.
+func (sc *ServerConfig) String() string {
+	var ver string
+	switch sc.TransportAPI {
+	case version.TransportV3:
+		ver = "xDSv3"
+	case version.TransportV2:
+		ver = "xDSv2"
+	}
+	return strings.Join([]string{sc.ServerURI, sc.CredsType, ver}, "-")
 }
 
 // UnmarshalJSON takes the json data (a list of servers) and unmarshals the
@@ -99,7 +120,7 @@ func (sc *ServerConfig) UnmarshalJSON(data []byte) error {
 	sc.ServerURI = xs.ServerURI
 	for _, cc := range xs.ChannelCreds {
 		// We stop at the first credential type that we support.
-		sc.credsType = cc.Type
+		sc.CredsType = cc.Type
 		if cc.Type == credsGoogleDefault {
 			sc.Creds = grpc.WithCredentialsBundle(google.NewDefaultCredentials())
 			break
@@ -231,8 +252,8 @@ type xdsServer struct {
 }
 
 func bootstrapConfigFromEnvVariable() ([]byte, error) {
-	fName := env.BootstrapFileName
-	fContent := env.BootstrapFileContent
+	fName := envconfig.XDSBootstrapFileName
+	fContent := envconfig.XDSBootstrapFileContent
 
 	// Bootstrap file name has higher priority than bootstrap content.
 	if fName != "" {
@@ -250,7 +271,8 @@ func bootstrapConfigFromEnvVariable() ([]byte, error) {
 		return []byte(fContent), nil
 	}
 
-	return nil, fmt.Errorf("none of the bootstrap environment variables (%q or %q) defined", env.BootstrapFileNameEnv, env.BootstrapFileContentEnv)
+	return nil, fmt.Errorf("none of the bootstrap environment variables (%q or %q) defined",
+		envconfig.XDSBootstrapFileNameEnv, envconfig.XDSBootstrapFileContentEnv)
 }
 
 // NewConfig returns a new instance of Config initialized by reading the
@@ -336,6 +358,22 @@ func NewConfigFromContents(data []byte) (*Config, error) {
 			config.CertProviderConfigs = configs
 		case "server_listener_resource_name_template":
 			if err := json.Unmarshal(v, &config.ServerListenerResourceNameTemplate); err != nil {
+				return nil, fmt.Errorf("xds: json.Unmarshal(%v) for field %q failed during bootstrap: %v", string(v), k, err)
+			}
+		case "client_default_listener_resource_name_template":
+			if !envconfig.XDSFederation {
+				logger.Warningf("xds: bootstrap field %v is not support when Federation is disabled", k)
+				continue
+			}
+			if err := json.Unmarshal(v, &config.ClientDefaultListenerResourceNameTemplate); err != nil {
+				return nil, fmt.Errorf("xds: json.Unmarshal(%v) for field %q failed during bootstrap: %v", string(v), k, err)
+			}
+		case "authorities":
+			if !envconfig.XDSFederation {
+				logger.Warningf("xds: bootstrap field %v is not support when Federation is disabled", k)
+				continue
+			}
+			if err := json.Unmarshal(v, &config.Authorities); err != nil {
 				return nil, fmt.Errorf("xds: json.Unmarshal(%v) for field %q failed during bootstrap: %v", string(v), k, err)
 			}
 		default:
