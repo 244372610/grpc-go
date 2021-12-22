@@ -26,6 +26,10 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
+	"google.golang.org/grpc/internal/grpclog"
+	"google.golang.org/grpc/xds/internal/xdsclient/load"
+	"google.golang.org/grpc/xds/internal/xdsclient/pubsub"
+	"google.golang.org/grpc/xds/internal/xdsclient/xdsresource"
 	"google.golang.org/protobuf/types/known/anypb"
 
 	"google.golang.org/grpc"
@@ -34,7 +38,6 @@ import (
 	"google.golang.org/grpc/internal/grpctest"
 	"google.golang.org/grpc/internal/testutils"
 	xdstestutils "google.golang.org/grpc/xds/internal/testutils"
-	"google.golang.org/grpc/xds/internal/version"
 	"google.golang.org/grpc/xds/internal/xdsclient/bootstrap"
 	"google.golang.org/protobuf/testing/protocmp"
 )
@@ -60,21 +63,9 @@ const (
 	defaultTestShortTimeout       = 10 * time.Millisecond // For events expected to *not* happen.
 )
 
-var (
-	cmpOpts = cmp.Options{
-		cmpopts.EquateEmpty(),
-		cmp.FilterValues(func(x, y error) bool { return true }, cmpopts.EquateErrors()),
-		cmp.Comparer(func(a, b time.Time) bool { return true }),
-		protocmp.Transform(),
-	}
-
-	cmpOptsIgnoreDetails = cmp.Options{
-		cmp.Comparer(func(a, b time.Time) bool { return true }),
-		cmp.Comparer(func(x, y error) bool {
-			return (x == nil) == (y == nil)
-		}),
-	}
-)
+func newStringP(s string) *string {
+	return &s
+}
 
 func clientOpts(balancerName string, overrideWatchExpiryTimeout bool) (*bootstrap.Config, time.Duration) {
 	watchExpiryTimeout := defaultWatchExpiryTimeout
@@ -90,62 +81,63 @@ func clientOpts(balancerName string, overrideWatchExpiryTimeout bool) (*bootstra
 	}, watchExpiryTimeout
 }
 
-type testAPIClient struct {
+type testController struct {
 	done          *grpcsync.Event
-	addWatches    map[ResourceType]*testutils.Channel
-	removeWatches map[ResourceType]*testutils.Channel
+	addWatches    map[xdsresource.ResourceType]*testutils.Channel
+	removeWatches map[xdsresource.ResourceType]*testutils.Channel
 }
 
-func overrideNewAPIClient() (*testutils.Channel, func()) {
-	origNewAPIClient := newAPIClient
+func overrideNewController() (*testutils.Channel, func()) {
+	origNewController := newController
 	ch := testutils.NewChannel()
-	newAPIClient = func(apiVersion version.TransportAPI, cc *grpc.ClientConn, opts BuildOptions) (APIClient, error) {
-		ret := newTestAPIClient()
+	newController = func(config *bootstrap.ServerConfig, pubsub *pubsub.Pubsub, validator xdsresource.UpdateValidatorFunc, logger *grpclog.PrefixLogger) (controllerInterface, error) {
+		ret := newTestController()
 		ch.Send(ret)
 		return ret, nil
 	}
-	return ch, func() { newAPIClient = origNewAPIClient }
+	return ch, func() { newController = origNewController }
 }
 
-func newTestAPIClient() *testAPIClient {
-	addWatches := map[ResourceType]*testutils.Channel{
-		ListenerResource:    testutils.NewChannel(),
-		RouteConfigResource: testutils.NewChannel(),
-		ClusterResource:     testutils.NewChannel(),
-		EndpointsResource:   testutils.NewChannel(),
+func newTestController() *testController {
+	addWatches := map[xdsresource.ResourceType]*testutils.Channel{
+		xdsresource.ListenerResource:    testutils.NewChannel(),
+		xdsresource.RouteConfigResource: testutils.NewChannel(),
+		xdsresource.ClusterResource:     testutils.NewChannel(),
+		xdsresource.EndpointsResource:   testutils.NewChannel(),
 	}
-	removeWatches := map[ResourceType]*testutils.Channel{
-		ListenerResource:    testutils.NewChannel(),
-		RouteConfigResource: testutils.NewChannel(),
-		ClusterResource:     testutils.NewChannel(),
-		EndpointsResource:   testutils.NewChannel(),
+	removeWatches := map[xdsresource.ResourceType]*testutils.Channel{
+		xdsresource.ListenerResource:    testutils.NewChannel(),
+		xdsresource.RouteConfigResource: testutils.NewChannel(),
+		xdsresource.ClusterResource:     testutils.NewChannel(),
+		xdsresource.EndpointsResource:   testutils.NewChannel(),
 	}
-	return &testAPIClient{
+	return &testController{
 		done:          grpcsync.NewEvent(),
 		addWatches:    addWatches,
 		removeWatches: removeWatches,
 	}
 }
 
-func (c *testAPIClient) AddWatch(resourceType ResourceType, resourceName string) {
+func (c *testController) AddWatch(resourceType xdsresource.ResourceType, resourceName string) {
 	c.addWatches[resourceType].Send(resourceName)
 }
 
-func (c *testAPIClient) RemoveWatch(resourceType ResourceType, resourceName string) {
+func (c *testController) RemoveWatch(resourceType xdsresource.ResourceType, resourceName string) {
 	c.removeWatches[resourceType].Send(resourceName)
 }
 
-func (c *testAPIClient) reportLoad(context.Context, *grpc.ClientConn, loadReportingOptions) {
+func (c *testController) ReportLoad(server string) (*load.Store, func()) {
+	panic("ReportLoad is not implemented")
 }
 
-func (c *testAPIClient) Close() {
+func (c *testController) Close() {
 	c.done.Fire()
 }
 
 // TestWatchCallAnotherWatch covers the case where watch() is called inline by a
 // callback. It makes sure it doesn't cause a deadlock.
 func (s) TestWatchCallAnotherWatch(t *testing.T) {
-	apiClientCh, cleanup := overrideNewAPIClient()
+	apiClientCh, cleanup := overrideNewController()
 	defer cleanup()
 
 	client, err := newWithConfig(clientOpts(testXDSServer, false))
@@ -160,45 +152,45 @@ func (s) TestWatchCallAnotherWatch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("timeout when waiting for API client to be created: %v", err)
 	}
-	apiClient := c.(*testAPIClient)
+	apiClient := c.(*testController)
 
 	clusterUpdateCh := testutils.NewChannel()
 	firstTime := true
-	client.WatchCluster(testCDSName, func(update ClusterUpdate, err error) {
-		clusterUpdateCh.Send(ClusterUpdateErrTuple{Update: update, Err: err})
+	client.WatchCluster(testCDSName, func(update xdsresource.ClusterUpdate, err error) {
+		clusterUpdateCh.Send(xdsresource.ClusterUpdateErrTuple{Update: update, Err: err})
 		// Calls another watch inline, to ensure there's deadlock.
-		client.WatchCluster("another-random-name", func(ClusterUpdate, error) {})
+		client.WatchCluster("another-random-name", func(xdsresource.ClusterUpdate, error) {})
 
-		if _, err := apiClient.addWatches[ClusterResource].Receive(ctx); firstTime && err != nil {
+		if _, err := apiClient.addWatches[xdsresource.ClusterResource].Receive(ctx); firstTime && err != nil {
 			t.Fatalf("want new watch to start, got error %v", err)
 		}
 		firstTime = false
 	})
-	if _, err := apiClient.addWatches[ClusterResource].Receive(ctx); err != nil {
+	if _, err := apiClient.addWatches[xdsresource.ClusterResource].Receive(ctx); err != nil {
 		t.Fatalf("want new watch to start, got error %v", err)
 	}
 
-	wantUpdate := ClusterUpdate{ClusterName: testEDSName}
-	client.NewClusters(map[string]ClusterUpdateErrTuple{testCDSName: {Update: wantUpdate}}, UpdateMetadata{})
+	wantUpdate := xdsresource.ClusterUpdate{ClusterName: testEDSName}
+	client.NewClusters(map[string]xdsresource.ClusterUpdateErrTuple{testCDSName: {Update: wantUpdate}}, xdsresource.UpdateMetadata{})
 	if err := verifyClusterUpdate(ctx, clusterUpdateCh, wantUpdate, nil); err != nil {
 		t.Fatal(err)
 	}
 
 	// The second update needs to be different in the underlying resource proto
 	// for the watch callback to be invoked.
-	wantUpdate2 := ClusterUpdate{ClusterName: testEDSName + "2", Raw: &anypb.Any{}}
-	client.NewClusters(map[string]ClusterUpdateErrTuple{testCDSName: {Update: wantUpdate2}}, UpdateMetadata{})
+	wantUpdate2 := xdsresource.ClusterUpdate{ClusterName: testEDSName + "2", Raw: &anypb.Any{}}
+	client.NewClusters(map[string]xdsresource.ClusterUpdateErrTuple{testCDSName: {Update: wantUpdate2}}, xdsresource.UpdateMetadata{})
 	if err := verifyClusterUpdate(ctx, clusterUpdateCh, wantUpdate2, nil); err != nil {
 		t.Fatal(err)
 	}
 }
 
-func verifyListenerUpdate(ctx context.Context, updateCh *testutils.Channel, wantUpdate ListenerUpdate, wantErr error) error {
+func verifyListenerUpdate(ctx context.Context, updateCh *testutils.Channel, wantUpdate xdsresource.ListenerUpdate, wantErr error) error {
 	u, err := updateCh.Receive(ctx)
 	if err != nil {
 		return fmt.Errorf("timeout when waiting for listener update: %v", err)
 	}
-	gotUpdate := u.(ListenerUpdateErrTuple)
+	gotUpdate := u.(xdsresource.ListenerUpdateErrTuple)
 	if wantErr != nil {
 		if gotUpdate.Err != wantErr {
 			return fmt.Errorf("unexpected error: %v, want %v", gotUpdate.Err, wantErr)
@@ -211,12 +203,12 @@ func verifyListenerUpdate(ctx context.Context, updateCh *testutils.Channel, want
 	return nil
 }
 
-func verifyRouteConfigUpdate(ctx context.Context, updateCh *testutils.Channel, wantUpdate RouteConfigUpdate, wantErr error) error {
+func verifyRouteConfigUpdate(ctx context.Context, updateCh *testutils.Channel, wantUpdate xdsresource.RouteConfigUpdate, wantErr error) error {
 	u, err := updateCh.Receive(ctx)
 	if err != nil {
 		return fmt.Errorf("timeout when waiting for route configuration update: %v", err)
 	}
-	gotUpdate := u.(RouteConfigUpdateErrTuple)
+	gotUpdate := u.(xdsresource.RouteConfigUpdateErrTuple)
 	if wantErr != nil {
 		if gotUpdate.Err != wantErr {
 			return fmt.Errorf("unexpected error: %v, want %v", gotUpdate.Err, wantErr)
@@ -229,12 +221,12 @@ func verifyRouteConfigUpdate(ctx context.Context, updateCh *testutils.Channel, w
 	return nil
 }
 
-func verifyClusterUpdate(ctx context.Context, updateCh *testutils.Channel, wantUpdate ClusterUpdate, wantErr error) error {
+func verifyClusterUpdate(ctx context.Context, updateCh *testutils.Channel, wantUpdate xdsresource.ClusterUpdate, wantErr error) error {
 	u, err := updateCh.Receive(ctx)
 	if err != nil {
 		return fmt.Errorf("timeout when waiting for cluster update: %v", err)
 	}
-	gotUpdate := u.(ClusterUpdateErrTuple)
+	gotUpdate := u.(xdsresource.ClusterUpdateErrTuple)
 	if wantErr != nil {
 		if gotUpdate.Err != wantErr {
 			return fmt.Errorf("unexpected error: %v, want %v", gotUpdate.Err, wantErr)
@@ -247,12 +239,12 @@ func verifyClusterUpdate(ctx context.Context, updateCh *testutils.Channel, wantU
 	return nil
 }
 
-func verifyEndpointsUpdate(ctx context.Context, updateCh *testutils.Channel, wantUpdate EndpointsUpdate, wantErr error) error {
+func verifyEndpointsUpdate(ctx context.Context, updateCh *testutils.Channel, wantUpdate xdsresource.EndpointsUpdate, wantErr error) error {
 	u, err := updateCh.Receive(ctx)
 	if err != nil {
 		return fmt.Errorf("timeout when waiting for endpoints update: %v", err)
 	}
-	gotUpdate := u.(EndpointsUpdateErrTuple)
+	gotUpdate := u.(xdsresource.EndpointsUpdateErrTuple)
 	if wantErr != nil {
 		if gotUpdate.Err != wantErr {
 			return fmt.Errorf("unexpected error: %v, want %v", gotUpdate.Err, wantErr)
@@ -280,7 +272,7 @@ func (s) TestClientNewSingleton(t *testing.T) {
 	}
 	defer func() { bootstrapNewConfig = oldBootstrapNewConfig }()
 
-	apiClientCh, cleanup := overrideNewAPIClient()
+	apiClientCh, cleanup := overrideNewController()
 	defer cleanup()
 
 	// The first New(). Should create a Client and a new APIClient.
@@ -295,7 +287,7 @@ func (s) TestClientNewSingleton(t *testing.T) {
 	if err != nil {
 		t.Fatalf("timeout when waiting for API client to be created: %v", err)
 	}
-	apiClient := c.(*testAPIClient)
+	apiClient := c.(*testController)
 
 	// Call New() again. They should all return the same client implementation,
 	// and should not create new API client.
@@ -354,7 +346,7 @@ func (s) TestClientNewSingleton(t *testing.T) {
 	if err != nil {
 		t.Fatalf("timeout when waiting for API client to be created: %v", err)
 	}
-	apiClient2 := c2.(*testAPIClient)
+	apiClient2 := c2.(*testController)
 
 	// The client wrapper with ref count should be the same.
 	if client2 != client {

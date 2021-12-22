@@ -21,13 +21,12 @@ package rls
 
 import (
 	"google.golang.org/grpc/balancer"
-	"google.golang.org/grpc/internal/grpcsync"
 )
 
-const rlsBalancerName = "rls"
+const rlsBalancerName = "rls_experimental"
 
 func init() {
-	balancer.Register(&rlsBB{})
+	balancer.Register(rlsBB{})
 }
 
 // rlsBB helps build RLS load balancers and parse the service config to be
@@ -36,18 +35,11 @@ type rlsBB struct{}
 
 // Name returns the name of the RLS LB policy and helps implement the
 // balancer.Balancer interface.
-func (*rlsBB) Name() string {
+func (rlsBB) Name() string {
 	return rlsBalancerName
 }
 
-func (*rlsBB) Build(cc balancer.ClientConn, opts balancer.BuildOptions) balancer.Balancer {
-	lb := &rlsBalancer{
-		done:       grpcsync.NewEvent(),
-		cc:         cc,
-		opts:       opts,
-		lbCfg:      &lbConfig{},
-		ccUpdateCh: make(chan *balancer.ClientConnState),
-	}
-	go lb.run()
-	return lb
+func (rlsBB) Build(cc balancer.ClientConn, opts balancer.BuildOptions) balancer.Balancer {
+	// TODO(easwars): Fix this once the LB policy implementation is pulled in.
+	return &rlsBalancer{}
 }

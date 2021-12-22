@@ -34,6 +34,7 @@ import (
 	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/credentials"
 	internalbackoff "google.golang.org/grpc/internal/backoff"
+	"google.golang.org/grpc/internal/grpcsync"
 	"google.golang.org/grpc/internal/transport"
 	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/resolver"
@@ -490,28 +491,51 @@ func (s) TestDialContextFailFast(t *testing.T) {
 }
 
 // securePerRPCCredentials always requires transport security.
-type securePerRPCCredentials struct{}
-
-func (c securePerRPCCredentials) GetRequestMetadata(ctx context.Context, uri ...string) (map[string]string, error) {
-	return nil, nil
+type securePerRPCCredentials struct {
+	credentials.PerRPCCredentials
 }
 
 func (c securePerRPCCredentials) RequireTransportSecurity() bool {
 	return true
 }
 
+type fakeBundleCreds struct {
+	credentials.Bundle
+	transportCreds credentials.TransportCredentials
+}
+
+func (b *fakeBundleCreds) TransportCredentials() credentials.TransportCredentials {
+	return b.transportCreds
+}
+
 func (s) TestCredentialsMisuse(t *testing.T) {
-	tlsCreds, err := credentials.NewClientTLSFromFile(testdata.Path("x509/server_ca_cert.pem"), "x.test.example.com")
+	// Use of no transport creds and no creds bundle must fail.
+	if _, err := Dial("passthrough:///Non-Existent.Server:80"); err != errNoTransportSecurity {
+		t.Fatalf("Dial(_, _) = _, %v, want _, %v", err, errNoTransportSecurity)
+	}
+
+	// Use of both transport creds and creds bundle must fail.
+	creds, err := credentials.NewClientTLSFromFile(testdata.Path("x509/server_ca_cert.pem"), "x.test.example.com")
 	if err != nil {
 		t.Fatalf("Failed to create authenticator %v", err)
 	}
-	// Two conflicting credential configurations
-	if _, err := Dial("passthrough:///Non-Existent.Server:80", WithTransportCredentials(tlsCreds), WithBlock(), WithInsecure()); err != errCredentialsConflict {
-		t.Fatalf("Dial(_, _) = _, %v, want _, %v", err, errCredentialsConflict)
+	dopts := []DialOption{
+		WithTransportCredentials(creds),
+		WithCredentialsBundle(&fakeBundleCreds{transportCreds: creds}),
 	}
-	// security info on insecure connection
-	if _, err := Dial("passthrough:///Non-Existent.Server:80", WithPerRPCCredentials(securePerRPCCredentials{}), WithBlock(), WithInsecure()); err != errTransportCredentialsMissing {
+	if _, err := Dial("passthrough:///Non-Existent.Server:80", dopts...); err != errTransportCredsAndBundle {
+		t.Fatalf("Dial(_, _) = _, %v, want _, %v", err, errTransportCredsAndBundle)
+	}
+
+	// Use of perRPC creds requiring transport security over an insecure
+	// transport must fail.
+	if _, err := Dial("passthrough:///Non-Existent.Server:80", WithPerRPCCredentials(securePerRPCCredentials{}), WithInsecure()); err != errTransportCredentialsMissing {
 		t.Fatalf("Dial(_, _) = _, %v, want _, %v", err, errTransportCredentialsMissing)
+	}
+
+	// Use of a creds bundle with nil transport credentials must fail.
+	if _, err := Dial("passthrough:///Non-Existent.Server:80", WithCredentialsBundle(&fakeBundleCreds{})); err != errNoTransportCredsInBundle {
+		t.Fatalf("Dial(_, _) = _, %v, want _, %v", err, errTransportCredsAndBundle)
 	}
 }
 
@@ -635,7 +659,8 @@ func (s) TestClientUpdatesParamsAfterGoAway(t *testing.T) {
 		t.Fatalf("Failed to listen. Err: %v", err)
 	}
 	defer lis.Close()
-	connected := make(chan struct{})
+	connected := grpcsync.NewEvent()
+	defer connected.Fire()
 	go func() {
 		conn, err := lis.Accept()
 		if err != nil {
@@ -657,7 +682,7 @@ func (s) TestClientUpdatesParamsAfterGoAway(t *testing.T) {
 			t.Errorf("error writing settings: %v", err)
 			return
 		}
-		<-connected
+		<-connected.Done()
 		if err := f.WriteGoAway(0, http2.ErrCodeEnhanceYourCalm, []byte("too_many_pings")); err != nil {
 			t.Errorf("error writing GOAWAY: %v", err)
 			return
@@ -675,7 +700,7 @@ func (s) TestClientUpdatesParamsAfterGoAway(t *testing.T) {
 		t.Fatalf("Dial(%s, _) = _, %v, want _, <nil>", addr, err)
 	}
 	defer cc.Close()
-	close(connected)
+	connected.Fire()
 	for {
 		time.Sleep(10 * time.Millisecond)
 		cc.mu.RLock()
