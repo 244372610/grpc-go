@@ -66,17 +66,20 @@ func newCCBalancerWrapper(cc *ClientConn, b balancer.Builder, bopts balancer.Bui
 
 // watcher balancer functions sequentially, so the balancer can be implemented
 // lock-free.
+// 监听从 updateCh 发送过来的更新
 func (ccb *ccBalancerWrapper) watcher() {
 	for {
 		select {
 		case t := <-ccb.updateCh.Get():
 			ccb.updateCh.Load()
 			if ccb.closed.HasFired() {
+				// 如果已经关闭，则退出
 				break
 			}
 			switch u := t.(type) {
 			case *scStateUpdate:
 				ccb.balancerMu.Lock()
+				// 更新 subConn 状态
 				ccb.balancer.UpdateSubConnState(u.sc, balancer.SubConnState{ConnectivityState: u.state, ConnectionError: u.err})
 				ccb.balancerMu.Unlock()
 			case *acBalancerWrapper:
@@ -98,14 +101,17 @@ func (ccb *ccBalancerWrapper) watcher() {
 			ccb.balancerMu.Unlock()
 			ccb.mu.Lock()
 			scs := ccb.subConns
+			// subConns 设置为nil
 			ccb.subConns = nil
 			ccb.mu.Unlock()
+			// 更新 balancer 状态为 Connecting
 			ccb.UpdateState(balancer.State{ConnectivityState: connectivity.Connecting, Picker: nil})
 			ccb.done.Fire()
 			// Fire done before removing the addr conns.  We can safely unblock
 			// ccb.close and allow the removeAddrConns to happen
 			// asynchronously.
 			for acbw := range scs {
+				// 删除 addrConn
 				ccb.cc.removeAddrConn(acbw.getAddrConn(), errConnDrain)
 			}
 			return
@@ -118,6 +124,7 @@ func (ccb *ccBalancerWrapper) close() {
 	<-ccb.done.Done()
 }
 
+// handleSubConnStateChange 处理 SubConn 状态的变化， 会向 updateCh 中塞入状态变化， ccBalancerWrapper watcher goroutine会监控对应的变化
 func (ccb *ccBalancerWrapper) handleSubConnStateChange(sc balancer.SubConn, s connectivity.State, err error) {
 	// When updating addresses for a SubConn, if the address in use is not in
 	// the new addresses, the old ac will be tearDown() and a new ac will be
@@ -184,6 +191,7 @@ func (ccb *ccBalancerWrapper) UpdateAddresses(sc balancer.SubConn, addrs []resol
 	acbw.UpdateAddresses(addrs)
 }
 
+// UpdateState 更新 balancer 状态
 func (ccb *ccBalancerWrapper) UpdateState(s balancer.State) {
 	ccb.mu.Lock()
 	defer ccb.mu.Unlock()
@@ -209,6 +217,7 @@ func (ccb *ccBalancerWrapper) Target() string {
 
 // acBalancerWrapper is a wrapper on top of ac for balancers.
 // It implements balancer.SubConn interface.
+// 实现了 balancer.SubConn
 type acBalancerWrapper struct {
 	mu sync.Mutex
 	ac *addrConn
@@ -239,6 +248,7 @@ func (acbw *acBalancerWrapper) UpdateAddresses(addrs []resolver.Address) {
 			return
 		}
 
+		// 新创建一个ac
 		ac, err := cc.newAddrConn(addrs, opts)
 		if err != nil {
 			channelz.Warningf(logger, acbw.ac.channelzID, "acBalancerWrapper: UpdateAddresses: failed to newAddrConn: %v", err)

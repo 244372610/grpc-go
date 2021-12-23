@@ -146,11 +146,14 @@ func DialContext(ctx context.Context, target string, opts ...DialOption) (conn *
 	cc.safeConfigSelector.UpdateConfigSelector(&defaultConfigSelector{nil})
 	cc.ctx, cc.cancel = context.WithCancel(context.Background())
 
+	// 重写默认值
 	for _, opt := range opts {
 		opt.apply(&cc.dopts)
 	}
 
+	// 多个 unaryClientInterceptor 合并成一个
 	chainUnaryClientInterceptors(cc)
+	// 多个 streamClientInterceptor 合并成一个
 	chainStreamClientInterceptors(cc)
 
 	defer func() {
@@ -322,6 +325,7 @@ func DialContext(ctx context.Context, target string, opts ...DialOption) (conn *
 	// A blocking dial blocks until the clientConn is ready.
 	if cc.dopts.block {
 		for {
+			// for 循环，一直等到clientConn ready
 			s := cc.GetState()
 			if s == connectivity.Ready {
 				break
@@ -461,9 +465,12 @@ func (csm *connectivityStateManager) getNotifyChan() <-chan struct{} {
 type ClientConnInterface interface {
 	// Invoke performs a unary RPC and returns after the response is received
 	// into reply.
+	// Unary 调用
 	Invoke(ctx context.Context, method string, args interface{}, reply interface{}, opts ...CallOption) error
 	// NewStream begins a streaming RPC.
+	// Stream 调用
 	NewStream(ctx context.Context, desc *StreamDesc, method string, opts ...CallOption) (ClientStream, error)
+	// 两个方法底层都会调用 newClientStream
 }
 
 // Assert *ClientConn implements ClientConnInterface.
@@ -633,6 +640,7 @@ func (cc *ClientConn) updateResolverState(s resolver.State, err error) error {
 
 	var ret error
 	if cc.dopts.disableServiceConfig || s.ServiceConfig == nil {
+		// 如果禁用服务配置或者服务配置为空，使用默认服务配置
 		cc.maybeApplyDefaultServiceConfig(s.Addresses)
 		// TODO: do we need to apply a failing LB policy if there is no
 		// default, per the error handling design?
@@ -684,6 +692,7 @@ func (cc *ClientConn) updateResolverState(s resolver.State, err error) error {
 			i++
 		}
 	}
+	// 调用负载均衡策略更新连接状态
 	uccsErr := bw.updateClientConnState(&balancer.ClientConnState{ResolverState: s, BalancerConfig: balCfg})
 	if ret == nil {
 		ret = uccsErr // prefer ErrBadResolver state since any other error is
@@ -865,6 +874,9 @@ func (ac *addrConn) connect() error {
 //  - If true, it updates ac.addrs and returns true. The ac will keep using
 //    the existing connection.
 //  - If false, it does nothing and returns false.
+// 用新的 addresses 列表更新 ac.addrs
+// 如果 ac 是 connecting 状态，返回 false， 调用应该停掉 ac 并返回一个新的ac
+// 如果 ac 是 transientFailure 状态， 则更新 ac.addrs 并返回 true
 func (ac *addrConn) tryUpdateAddrs(addrs []resolver.Address) bool {
 	ac.mu.Lock()
 	defer ac.mu.Unlock()
@@ -972,8 +984,10 @@ func (cc *ClientConn) applyServiceConfigAndBalancer(sc *ServiceConfig, configSel
 		// option is not set.
 		var newBalancerName string
 		if cc.sc != nil && cc.sc.lbConfig != nil {
+			// 优先使用服务配置的负载均衡策略
 			newBalancerName = cc.sc.lbConfig.name
 		} else {
+			// 如果返回的解析地址中有一个是 resolver.GRPCLB 类型，使用 grpclb
 			var isGRPCLB bool
 			for _, a := range addrs {
 				if a.Type == resolver.GRPCLB {
@@ -989,6 +1003,7 @@ func (cc *ClientConn) applyServiceConfigAndBalancer(sc *ServiceConfig, configSel
 				newBalancerName = PickFirstBalancerName
 			}
 		}
+		// 切换负载均衡策略
 		cc.switchBalancer(newBalancerName)
 	} else if cc.balancerWrapper == nil {
 		// Balancer dial option was set, and this is the first time handling
@@ -1211,6 +1226,7 @@ func (ac *addrConn) resetTransport() {
 		ac.backoffIdx = 0
 
 		hctx, hcancel := context.WithCancel(ac.ctx)
+		// 这里会检查状态是否Ready
 		ac.startHealthCheck(hctx)
 		ac.mu.Unlock()
 

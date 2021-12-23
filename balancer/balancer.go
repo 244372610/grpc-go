@@ -365,6 +365,8 @@ type ConnectivityStateEvaluator struct {
 //  - Else the aggregated state is TransientFailure.
 //
 // Idle and Shutdown are not considered.
+// 只要有一个 SubConn 的状态是是Ready， 则 balancer 的状态为 Ready
+// 只要有一个 SubConn 的状态是 Connecting， 则 balancer 的状态是Connecting
 func (cse *ConnectivityStateEvaluator) RecordTransition(oldState, newState connectivity.State) connectivity.State {
 	// Update counters.
 	for idx, state := range []connectivity.State{oldState, newState} {

@@ -118,6 +118,7 @@ func (b *baseBalancer) UpdateClientConnState(s balancer.ClientConnState) error {
 		//
 		// TODO: read attributes to handle duplicate connections.
 		aNoAttrs := a
+		// 去除 attributes， 目的是去重 attributes pointers不同，但是内容相同的地址
 		aNoAttrs.Attributes = nil
 		addrsSet[aNoAttrs] = struct{}{}
 		if scInfo, ok := b.subConns[aNoAttrs]; !ok {
@@ -132,9 +133,11 @@ func (b *baseBalancer) UpdateClientConnState(s balancer.ClientConnState) error {
 				continue
 			}
 			b.subConns[aNoAttrs] = subConnInfo{subConn: sc, attrs: a.Attributes}
+			// 开始状态是 Idle
 			b.scStates[sc] = connectivity.Idle
 			sc.Connect()
 		} else {
+			// 如果已经存在则更新
 			// Always update the subconn's address in case the attributes
 			// changed.
 			//
@@ -192,8 +195,10 @@ func (b *baseBalancer) regeneratePicker() {
 	readySCs := make(map[balancer.SubConn]SubConnInfo)
 
 	// Filter out all ready SCs from full subConn map.
+	// 从 subConns 中过滤出已经 Ready 的 subConn
 	for addr, scInfo := range b.subConns {
 		if st, ok := b.scStates[scInfo.subConn]; ok && st == connectivity.Ready {
+			// addr 的 attributes 重新被赋值
 			addr.Attributes = scInfo.attrs
 			readySCs[scInfo.subConn] = SubConnInfo{Address: addr}
 		}
@@ -206,6 +211,7 @@ func (b *baseBalancer) UpdateSubConnState(sc balancer.SubConn, state balancer.Su
 	if logger.V(2) {
 		logger.Infof("base.baseBalancer: handle SubConn state change: %p, %v", sc, s)
 	}
+	// 之前的状态
 	oldS, ok := b.scStates[sc]
 	if !ok {
 		if logger.V(2) {
@@ -213,10 +219,12 @@ func (b *baseBalancer) UpdateSubConnState(sc balancer.SubConn, state balancer.Su
 		}
 		return
 	}
+	// 如果之前的状态是瞬时失败，并且现在的状态是Connecting
 	if oldS == connectivity.TransientFailure && s == connectivity.Connecting {
 		// Once a subconn enters TRANSIENT_FAILURE, ignore subsequent
 		// CONNECTING transitions to prevent the aggregated state from being
 		// always CONNECTING when many backends exist but are all down.
+		// 一旦一个 subconn 进入TRANSIENT_FAILURE 状态，则忽略后续的 connecting 状态转换，以防止当许多后端存在但全部down时，聚合状态总是处于connecting状态。
 		return
 	}
 	b.scStates[sc] = s
@@ -235,7 +243,7 @@ func (b *baseBalancer) UpdateSubConnState(sc balancer.SubConn, state balancer.Su
 	b.state = b.csEvltr.RecordTransition(oldS, s)
 
 	// Regenerate picker when one of the following happens:
-	//  - this sc entered or left ready
+	//  - this sc entered or left ready 当前 sc 进入或者离开 ready状态
 	//  - the aggregated state of balancer is TransientFailure
 	//    (may need to update error message)
 	if (s == connectivity.Ready) != (oldS == connectivity.Ready) ||
